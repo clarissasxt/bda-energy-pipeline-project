@@ -65,6 +65,8 @@ with forecast_tab:
 
     # Get the weather data for the next 7 days
     weather_forecast_df = get_weather_forecast()
+    weather_forecast_df["is_weekend"] = weather_forecast_df["date"].dt.dayofweek.isin([5, 6]).astype(int)
+    weather_forecast_df["season"] = weather_forecast_df["date"].apply(get_season)
 
     if weather_forecast_df is not None:
         # Plot the weather forecast data
@@ -128,7 +130,9 @@ with forecast_tab:
         #             "temperature": float(weather_forecast_df["temperature_2m"].iloc[i]),
         #             "humidity": float(weather_forecast_df["relative_humidity_2m"].iloc[i]),
         #             "windSpeed": float(weather_forecast_df["wind_speed_10m"].iloc[i]),
-        #             "household_cluster": household_cluster  # Include the selected cluster
+        #             "is_weekend": int(weather_forecast_df["is_weekend"].iloc[i]),
+        #             "season": weather_forecast_df["season"].iloc[i],
+        #             "household_cluster": household_cluster  
         #         })
 
         #     # API Gateway URL
