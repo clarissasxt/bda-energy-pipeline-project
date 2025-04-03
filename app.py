@@ -39,23 +39,21 @@ def get_weather_forecast():
 
     return pd.DataFrame(data=hourly_data)
 
-
-# Function to determine the season based on the current date
 def get_season(date):
     month, day = date.month, date.day
     if (month == 12 and day >= 21) or (month <= 3 and day <= 19):
-        return "Winter"
+        return 0 # Winter
     elif (month == 3 and day >= 20) or (month <= 6 and day <= 20):
-        return "Spring"
+        return 1 # Spring
     elif (month == 6 and day >= 21) or (month <= 9 and day <= 21):
-        return "Summer"
+        return 2 # Summer
     else:
-        return "Fall"
+        return 3 # Autumn
 
-# Streamlit app setup
+# app code
 st.title("Energy Analysis & Visualisation Dashbord")
 
-# Create Tabs
+# 2 tabs - Energy Forecast and Dunkelflaute Prediction
 forecast_tab, dunkelflaute_tab = st.tabs(["📈 Energy Forecast", "🌑 Dunkelflaute Prediction"])
 
 with forecast_tab:
@@ -69,10 +67,10 @@ with forecast_tab:
     weather_forecast_df["season"] = weather_forecast_df["date"].apply(get_season)
 
     if weather_forecast_df is not None:
-        # Plot the weather forecast data
+        # plot weather forecast data
         fig = go.Figure()
 
-        # Add temperature line
+        # temperature
         fig.add_trace(go.Scatter(
             x=weather_forecast_df["date"],
             y=weather_forecast_df["temperature_2m"],
@@ -81,7 +79,7 @@ with forecast_tab:
             line=dict(color='red')
         ))
 
-        # Add relative humidity line
+        # humidity
         fig.add_trace(go.Scatter(
             x=weather_forecast_df["date"],
             y=weather_forecast_df["relative_humidity_2m"],
@@ -90,7 +88,7 @@ with forecast_tab:
             line=dict(color='blue')
         ))
 
-        # Add wind speed line
+        # wind speed 
         fig.add_trace(go.Scatter(
             x=weather_forecast_df["date"],
             y=weather_forecast_df["wind_speed_10m"],
@@ -99,7 +97,6 @@ with forecast_tab:
             line=dict(color='green')
         ))
 
-        # Update layout
         fig.update_layout(
             title="Weather Forecast for the Next 7 Days",
             xaxis_title="Date",
@@ -107,8 +104,7 @@ with forecast_tab:
             hovermode="x",
             legend_title="Weather Variables"
         )
-    
-        # Display the plot
+        
         st.plotly_chart(fig, theme="streamlit")
         
         # radio button for household cluster selection
@@ -118,110 +114,154 @@ with forecast_tab:
                 "Cluster 8", "Cluster 9", "Cluster 10"]
         )
 
-        # Display the selected cluster
         st.write(f"You selected: {household_cluster}")
         
-        # if st.button("Generate Energy Forecast"):
-        #     # Prepare test data for Lambda
-        #     test_data = []
-        #     for i in range(len(weather_forecast_df)):
-        #         test_data.append({
-        #             "datetime": weather_forecast_df["date"].iloc[i].strftime("%Y-%m-%d %H:%M:%S"),  # Match Lambda's expected format
-        #             "temperature": float(weather_forecast_df["temperature_2m"].iloc[i]),
-        #             "humidity": float(weather_forecast_df["relative_humidity_2m"].iloc[i]),
-        #             "windSpeed": float(weather_forecast_df["wind_speed_10m"].iloc[i]),
-        #             "is_weekend": int(weather_forecast_df["is_weekend"].iloc[i]),
-        #             "season": weather_forecast_df["season"].iloc[i],
-        #             "household_cluster": household_cluster  
-        #         })
+        if st.button("Generate Energy Forecast"):
+            # test data for Lambda
+            test_data = []
+            for i in range(len(weather_forecast_df)):
+                test_data.append({
+                    "datetime": weather_forecast_df["date"].iloc[i].strftime("%Y-%m-%d %H:%M:%S"),  # Match Lambda's expected format
+                    "temperature": float(weather_forecast_df["temperature_2m"].iloc[i]),
+                    "humidity": float(weather_forecast_df["relative_humidity_2m"].iloc[i]),
+                    "windSpeed": float(weather_forecast_df["wind_speed_10m"].iloc[i]),
+                    "is_weekend": int(weather_forecast_df["is_weekend"].iloc[i]),
+                    "season": int(weather_forecast_df["season"].iloc[i])
+                })
 
-        #     # API Gateway URL
-        #     API_URL = "https://m1auibsxn8.execute-api.us-east-1.amazonaws.com/prod/call-sagemaker-endpoint"
+            API_URL = "https://m1auibsxn8.execute-api.us-east-1.amazonaws.com/prod/call-sagemaker-endpoint"
 
-        #     # Request payload
-        #     request_payload = {"periods": 7, "test_data": test_data}
+            # define request payload
+            request_payload = {
+                "periods": 7, 
+                "test_data": test_data, 
+                "cluster": household_cluster.split(" ")[-1]
+            }
 
-        #     # Call the Lambda function via API Gateway
-        #     response = requests.post(API_URL, json=request_payload)
+            # call Lambda via API Gateway
+            response = requests.post(API_URL, json=request_payload)
 
-        #     if response.status_code == 200:
-        #         # Parse the forecasted values from the response
-        #         data = response.json()
-        #         forecast_values = data["forecast"]
+            if response.status_code == 200:
+                # Parse the forecasted values from the response
+                data = response.json()
+                forecast_data = data.get("forecast", {}).get("predictions", [])
 
-        #         # Convert to DataFrame
-        #         forecast_df = pd.DataFrame(forecast_values, columns=["Predicted Energy"])
-        #         forecast_df.index = weather_forecast_df["date"]
+                # for debugging - response
+                # st.write("Lambda Response:", data)
 
-        #         # Plot results
-        #         fig = go.Figure()
-        #         fig.add_trace(go.Scatter(
-        #             x=forecast_df.index,
-        #             y=forecast_df["Predicted Energy"],
-        #             mode='lines',
-        #             name='Forecast',
-        #             line=dict(color='blue', dash='solid')
-        #         ))
-        #         fig.update_layout(
-        #             title="7-Day Hourly Energy Consumption Forecast",
-        #             xaxis_title="Date and Time",
-        #             yaxis_title="Predicted Energy Consumption (kWh)",
-        #             hovermode="x"
-        #         )
+                # Extract predictions and ensure alignment with weather_forecast_df
+                if len(forecast_data) != len(weather_forecast_df):
+                    st.error("Mismatch in forecast data length. Please try again later.")
+                elif len(forecast_data) == 0:
+                    st.error("No forecast data received. Please try again later.")
+                else:
+                    # Parse the forecast data into a DataFrame
+                    forecast_df = pd.DataFrame(forecast_data)
+                    forecast_df["datetime"] = pd.to_datetime(forecast_df["datetime"])  # Ensure datetime format
 
-        #         st.plotly_chart(fig)
-        #     else:
-        #         st.error(f"Failed to get forecast. Error: {response.text}")
+                    # Remove timezone from forecast_df's datetime column
+                    forecast_df["datetime"] = forecast_df["datetime"].dt.tz_localize(None)
+
+                    # Remove timezone from weather_forecast_df's date column (if needed)
+                    weather_forecast_df["date"] = weather_forecast_df["date"].dt.tz_localize(None)
+
+                    # Merge with weather_forecast_df to ensure alignment
+                    forecast_df = forecast_df.merge(
+                        weather_forecast_df[["date"]],
+                        left_on="datetime",
+                        right_on="date",
+                        how="right"
+                    )
+
+
+                    # Plot hourly forecast results with confidence interval
+                    fig = go.Figure()
+
+                    # Add the confidence interval (shaded region)
+                    # fig.add_trace(go.Scatter(
+                    #     x=pd.concat([forecast_df["datetime"], forecast_df["datetime"][::-1]]),
+                    #     y=pd.concat([forecast_df["upper"], forecast_df["lower"][::-1]]),
+                    #     fill='toself',
+                    #     fillcolor='rgba(100, 149, 237, 0.3)',  # Light blue fill
+                    #     line=dict(color='rgba(255,255,255,0)'),  # No border line
+                    #     hoverinfo="skip",
+                    #     name='Confidence Interval'
+                    # ))
+
+                    # Add the hourly predictions line
+                    fig.add_trace(go.Scatter(
+                        x=forecast_df["datetime"],
+                        y=forecast_df["predictions"],
+                        mode='lines',
+                        name='Hourly Forecast',
+                        line=dict(color='blue', dash='solid')
+                    ))
+
+                    fig.update_layout(
+                        title="7-Day Hourly Energy Consumption Forecast with Confidence Interval",
+                        xaxis_title="Date and Time",
+                        yaxis_title="Predicted Energy Consumption (kWh)",
+                        hovermode="x"
+                    )
+
+                    st.plotly_chart(fig)
+
+                    # Display the hourly forecasted values in a table
+                    st.write("### Hourly Forecasted Values")
+                    st.table(forecast_df[["datetime", "predictions", "lower", "upper"]])
+            
+            else:
+                st.error(f"Failed to get forecast. Error: {response.text}")
         
         # test w fake data first
-        if st.button("Generate Energy Forecast"):
-            # fake values
-            fake_forecast_values = np.random.uniform(low=100, high=300, size=7)  # Daily total energy consumption
-            lower_bound = fake_forecast_values - np.random.uniform(low=20, high=50, size=7)  # Lower confidence interval
-            upper_bound = fake_forecast_values + np.random.uniform(low=20, high=50, size=7)  # Upper confidence interval
+    #     if st.button("Generate Energy Forecast"):
+    #         # fake values
+    #         fake_forecast_values = np.random.uniform(low=100, high=300, size=7)  # Daily total energy consumption
+    #         lower_bound = fake_forecast_values - np.random.uniform(low=20, high=50, size=7)  # Lower confidence interval
+    #         upper_bound = fake_forecast_values + np.random.uniform(low=20, high=50, size=7)  # Upper confidence interval
 
-            daily_forecast_df = pd.DataFrame({
-                "date": pd.date_range(start=weather_forecast_df["date"].iloc[0], periods=7, freq='D'),
-                "predicted_energy": fake_forecast_values,
-                "lower_bound": lower_bound,
-                "upper_bound": upper_bound
-            })
+    #         daily_forecast_df = pd.DataFrame({
+    #             "date": pd.date_range(start=weather_forecast_df["date"].iloc[0], periods=7, freq='D'),
+    #             "predicted_energy": fake_forecast_values,
+    #             "lower_bound": lower_bound,
+    #             "upper_bound": upper_bound
+    #         })
 
-            fig = go.Figure()
+    #         fig = go.Figure()
 
-            # predicted energy
-            fig.add_trace(go.Scatter(
-                x=daily_forecast_df["date"],
-                y=daily_forecast_df["predicted_energy"],
-                mode='lines',
-                name='Predicted Energy',
-                line=dict(color='blue', dash='solid')
-            ))
+    #         # predicted energy
+    #         fig.add_trace(go.Scatter(
+    #             x=daily_forecast_df["date"],
+    #             y=daily_forecast_df["predicted_energy"],
+    #             mode='lines',
+    #             name='Predicted Energy',
+    #             line=dict(color='blue', dash='solid')
+    #         ))
 
-            # confidence interval 
-            fig.add_trace(go.Scatter(
-                x=pd.concat([daily_forecast_df["date"], daily_forecast_df["date"][::-1]]),
-                y=pd.concat([daily_forecast_df["upper_bound"], daily_forecast_df["lower_bound"][::-1]]),
-                fill='toself',
-                fillcolor='rgba(100, 149, 237, 0.3)',  # Darker light blue fill
-                line=dict(color='rgba(255,255,255,0)'),
-                hoverinfo="skip",
-                name='Confidence Interval'
-            ))
+    #         # confidence interval 
+    #         fig.add_trace(go.Scatter(
+    #             x=pd.concat([daily_forecast_df["date"], daily_forecast_df["date"][::-1]]),
+    #             y=pd.concat([daily_forecast_df["upper_bound"], daily_forecast_df["lower_bound"][::-1]]),
+    #             fill='toself',
+    #             fillcolor='rgba(100, 149, 237, 0.3)',  # Darker light blue fill
+    #             line=dict(color='rgba(255,255,255,0)'),
+    #             hoverinfo="skip",
+    #             name='Confidence Interval'
+    #         ))
 
 
-            fig.update_layout(
-                title="7-Day Daily Energy Consumption Forecast",
-                xaxis_title="Date",
-                yaxis_title="Predicted Energy Consumption (kWh)",
-                hovermode="x",
-                legend_title="Forecast Components"
-            )
+    #         fig.update_layout(
+    #             title="7-Day Daily Energy Consumption Forecast",
+    #             xaxis_title="Date",
+    #             yaxis_title="Predicted Energy Consumption (kWh)",
+    #             hovermode="x",
+    #             legend_title="Forecast Components"
+    #         )
 
-            # Display the plot
-            st.plotly_chart(fig)
-    else:
-        st.error("Failed to retrieve weather data.")
+    #         # Display the plot
+    #         st.plotly_chart(fig)
+    # else:
+    #     st.error("Failed to retrieve weather data.")
         
     
 
@@ -231,18 +271,17 @@ with dunkelflaute_tab:
     st.write("Analyze the probability of Dunkelflaute for the next 7 days based on forecasted weather data.")
 
     if st.button("Generate Dunkelflaute Prediction"):
-        # Step 1: Fetch weather forecast data for the next 7 days
+        # fetch weather forecast data for the next 7 days
         weather_forecast_df = get_weather_forecast()
 
+        # test w fake data (heatmap, time-series, table form)
         if weather_forecast_df is not None:
-            # Step 2: Generate fake Dunkelflaute probabilities
-            # Simulate hourly probabilities (168 hours for 7 days)
             hourly_probabilities = np.random.uniform(low=0, high=1, size=len(weather_forecast_df))
 
             # Simulate daily aggregated Dunkelflaute classification (Yes/No)
             daily_aggregated = ["Yes" if np.random.uniform(0, 1) > 0.7 else "No" for _ in range(7)]
 
-            # Step 3: Display the heatmap (zoomed-in view)
+            # heatmap 
             st.write("### Hourly Dunkelflaute Probability Heatmap")
             heatmap_data = pd.DataFrame({
                 "datetime": weather_forecast_df["date"],
@@ -263,6 +302,36 @@ with dunkelflaute_tab:
                 title="Hourly Dunkelflaute Probability Heatmap",
                 xaxis_title="Date",
                 yaxis_title="Hour of Day"
+            )
+            st.plotly_chart(fig)
+            
+            # time-series chart for Dunkelflaute Probability
+            st.write("### Dunkelflaute Probability Time Series")
+            time_series_data = pd.DataFrame({
+                "date": weather_forecast_df["date"].dt.date,
+                "hour_of_day": weather_forecast_df["date"].dt.hour,
+                "dunkelflaute_prob": hourly_probabilities
+            })
+            time_series_data["datetime"] = pd.to_datetime(
+                time_series_data["date"].astype(str) + " " + time_series_data["hour_of_day"].astype(str) + ":00"
+            )
+
+            # plot dunkelflaute
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=time_series_data["datetime"],
+                y=time_series_data["dunkelflaute_prob"],
+                mode='lines',
+                name='Dunkelflaute Probability',
+                line=dict(color='blue', dash='solid'),
+                marker=dict(size=5)
+            ))
+            fig.update_layout(
+                title="Dunkelflaute Probability Time Series (Predicted Probabilities)",
+                xaxis_title="Date and Hour",
+                yaxis_title="Dunkelflaute Probability",
+                xaxis=dict(tickformat="%Y-%m-%d %H:%M", tickangle=45),
+                hovermode="x"
             )
             st.plotly_chart(fig)
 
