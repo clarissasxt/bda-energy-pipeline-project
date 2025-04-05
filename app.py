@@ -8,6 +8,13 @@ import openmeteo_requests
 from retry_requests import retry
 import numpy as np
 import json
+import os
+from dotenv import load_dotenv
+
+from helper_functions_qn2 import get_weather_data, process_weather_data, prepare_data_for_sagemaker, get_sagemaker_predictions, prepare_final_df, plot_heatmap, plot_timeseries
+
+# Load environment variables from the .env file
+load_dotenv() 
 
 # Open-Meteo API to retrieve weather forecast information
 cache_session = requests_cache.CachedSession('.cache', expire_after=3600)
@@ -327,79 +334,116 @@ with dunkelflaute_tab:
     st.image("https://www.concertoplus.eu/wp-content/uploads/2016/08/cre-page-banner.jpg", use_container_width=True)
     st.subheader("Dunkelflaute Prediction")
     st.write("Analyze the probability of Dunkelflaute for the next 7 days based on forecasted weather data.")
+    
+    # Set your latitude and longitude
+    latitude = 51.5085
+    longitude = -0.1257
+    variables = ["wind_speed_120m", "cloud_cover"]
+
+    # Access the environment variables
+    AWS_ACCESS_KEY_ID_QN2 = os.getenv('AWS_ACCESS_KEY_ID_QN2')
+    AWS_SECRET_ACCESS_KEY_QN2 = os.getenv('AWS_SECRET_ACCESS_KEY_QN2')
+    
+    print(f"AWS_ACCESS_KEY_ID_QN2: {AWS_ACCESS_KEY_ID_QN2}")
+    
+    # Set the SageMaker endpoint name
+    endpoint_name_qn2 = 'Orchestrate-ETL-ML-Pipeline-qn2-xgb-endpoint'
 
     if st.button("Generate Dunkelflaute Prediction"):
-        # fetch weather forecast data for the next 7 days
-        weather_forecast_df = get_weather_forecast()
+        # Get weather data
+        response = get_weather_data(latitude, longitude, variables)
 
-        # test w fake data (heatmap, time-series, table form)
-        if weather_forecast_df is not None:
-            hourly_probabilities = np.random.uniform(low=0, high=1, size=len(weather_forecast_df))
+        # Process weather data and prepare dataframe
+        hourly_dataframe = process_weather_data(response)
 
-            # Simulate daily aggregated Dunkelflaute classification (Yes/No)
-            daily_aggregated = ["Yes" if np.random.uniform(0, 1) > 0.7 else "No" for _ in range(7)]
+        # Prepare data for SageMaker
+        payload, hourly_dataframe = prepare_data_for_sagemaker(hourly_dataframe)
 
-            # heatmap 
-            st.write("### Hourly Dunkelflaute Probability Heatmap")
-            heatmap_data = pd.DataFrame({
-                "datetime": weather_forecast_df["date"],
-                "probability": hourly_probabilities
-            })
-            heatmap_data["hour"] = heatmap_data["datetime"].dt.hour
-            heatmap_data["day"] = heatmap_data["datetime"].dt.date
+        # Get predictions from SageMaker
+        output_df = get_sagemaker_predictions(payload, endpoint_name_qn2, AWS_ACCESS_KEY_ID_QN2, AWS_SECRET_ACCESS_KEY_QN2)
 
-            heatmap_pivot = heatmap_data.pivot(index="hour", columns="day", values="probability")
-            fig = go.Figure(data=go.Heatmap(
-                z=heatmap_pivot.values,
-                x=heatmap_pivot.columns,
-                y=heatmap_pivot.index,
-                colorscale="Viridis",
-                colorbar=dict(title="Probability")
-            ))
-            fig.update_layout(
-                title="Hourly Dunkelflaute Probability Heatmap",
-                xaxis_title="Date",
-                yaxis_title="Hour of Day"
-            )
-            st.plotly_chart(fig)
+        # Prepare the final dataframe for visualization
+        final_df = prepare_final_df(hourly_dataframe, output_df)
+
+        # Plot the heatmap and display it in Streamlit
+        heatmap_fig = plot_heatmap(final_df)
+        st.plotly_chart(heatmap_fig)
+
+        # Plot the time-series forecast and display it in Streamlit
+        timeseries_fig = plot_timeseries(final_df)
+        st.plotly_chart(timeseries_fig)
+        
+        # # fetch weather forecast data for the next 7 days
+        # weather_forecast_df = get_weather_forecast()
+
+        # # test w fake data (heatmap, time-series, table form)
+        # if weather_forecast_df is not None:
+        #     hourly_probabilities = np.random.uniform(low=0, high=1, size=len(weather_forecast_df))
+
+        #     # Simulate daily aggregated Dunkelflaute classification (Yes/No)
+        #     daily_aggregated = ["Yes" if np.random.uniform(0, 1) > 0.7 else "No" for _ in range(7)]
+
+        #     # heatmap 
+        #     st.write("### Hourly Dunkelflaute Probability Heatmap")
+        #     heatmap_data = pd.DataFrame({
+        #         "datetime": weather_forecast_df["date"],
+        #         "probability": hourly_probabilities
+        #     })
+        #     heatmap_data["hour"] = heatmap_data["datetime"].dt.hour
+        #     heatmap_data["day"] = heatmap_data["datetime"].dt.date
+
+        #     heatmap_pivot = heatmap_data.pivot(index="hour", columns="day", values="probability")
+        #     fig = go.Figure(data=go.Heatmap(
+        #         z=heatmap_pivot.values,
+        #         x=heatmap_pivot.columns,
+        #         y=heatmap_pivot.index,
+        #         colorscale="Viridis",
+        #         colorbar=dict(title="Probability")
+        #     ))
+        #     fig.update_layout(
+        #         title="Hourly Dunkelflaute Probability Heatmap",
+        #         xaxis_title="Date",
+        #         yaxis_title="Hour of Day"
+        #     )
+        #     st.plotly_chart(fig)
             
-            # time-series chart for Dunkelflaute Probability
-            st.write("### Dunkelflaute Probability Time Series")
-            time_series_data = pd.DataFrame({
-                "date": weather_forecast_df["date"].dt.date,
-                "hour_of_day": weather_forecast_df["date"].dt.hour,
-                "dunkelflaute_prob": hourly_probabilities
-            })
-            time_series_data["datetime"] = pd.to_datetime(
-                time_series_data["date"].astype(str) + " " + time_series_data["hour_of_day"].astype(str) + ":00"
-            )
+        #     # time-series chart for Dunkelflaute Probability
+        #     st.write("### Dunkelflaute Probability Time Series")
+        #     time_series_data = pd.DataFrame({
+        #         "date": weather_forecast_df["date"].dt.date,
+        #         "hour_of_day": weather_forecast_df["date"].dt.hour,
+        #         "dunkelflaute_prob": hourly_probabilities
+        #     })
+        #     time_series_data["datetime"] = pd.to_datetime(
+        #         time_series_data["date"].astype(str) + " " + time_series_data["hour_of_day"].astype(str) + ":00"
+        #     )
 
-            # plot dunkelflaute
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(
-                x=time_series_data["datetime"],
-                y=time_series_data["dunkelflaute_prob"],
-                mode='lines',
-                name='Dunkelflaute Probability',
-                line=dict(color='blue', dash='solid'),
-                marker=dict(size=5)
-            ))
-            fig.update_layout(
-                title="Dunkelflaute Probability Time Series (Predicted Probabilities)",
-                xaxis_title="Date and Hour",
-                yaxis_title="Dunkelflaute Probability",
-                xaxis=dict(tickformat="%Y-%m-%d %H:%M", tickangle=45),
-                hovermode="x"
-            )
-            st.plotly_chart(fig)
+        #     # plot dunkelflaute
+        #     fig = go.Figure()
+        #     fig.add_trace(go.Scatter(
+        #         x=time_series_data["datetime"],
+        #         y=time_series_data["dunkelflaute_prob"],
+        #         mode='lines',
+        #         name='Dunkelflaute Probability',
+        #         line=dict(color='blue', dash='solid'),
+        #         marker=dict(size=5)
+        #     ))
+        #     fig.update_layout(
+        #         title="Dunkelflaute Probability Time Series (Predicted Probabilities)",
+        #         xaxis_title="Date and Hour",
+        #         yaxis_title="Dunkelflaute Probability",
+        #         xaxis=dict(tickformat="%Y-%m-%d %H:%M", tickangle=45),
+        #         hovermode="x"
+        #     )
+        #     st.plotly_chart(fig)
 
-            # display the 7-day aggregated forecast (zoomed-out view)
-            st.write("### 7-Day Aggregated Dunkelflaute Forecast")
-            daily_forecast_df = pd.DataFrame({
-                "date": pd.date_range(start=weather_forecast_df["date"].iloc[0], periods=7, freq='D'),
-                "dunkelflaute": daily_aggregated
-            })
-            st.table(daily_forecast_df)
+        #     # display the 7-day aggregated forecast (zoomed-out view)
+        #     st.write("### 7-Day Aggregated Dunkelflaute Forecast")
+        #     daily_forecast_df = pd.DataFrame({
+        #         "date": pd.date_range(start=weather_forecast_df["date"].iloc[0], periods=7, freq='D'),
+        #         "dunkelflaute": daily_aggregated
+        #     })
+        #     st.table(daily_forecast_df)
 
-        else:
-            st.error("Failed to retrieve weather data.")
+        # else:
+        #     st.error("Failed to retrieve weather data.")
