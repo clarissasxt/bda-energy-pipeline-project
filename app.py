@@ -53,14 +53,14 @@ def get_season(date):
 
 ##### STREAMLIT #####
 # app code
-st.title("Energy Analysis & Visualisation Dashbord")
+st.title("UK Energy Analysis & Visualisation Dashboard")
 
 # 2 tabs - Energy Forecast and Dunkelflaute Prediction
 forecast_tab, dunkelflaute_tab = st.tabs(["📈 Energy Forecast", "🌑 Dunkelflaute Prediction"])
 
 with forecast_tab:
     st.image("https://www.teriin.org/sites/default/files/2018-01/theme-banner_0.jpg", use_container_width=True)
-    st.subheader("Weather Forecast")
+    st.subheader("🌤️ Weather Forecast")
     st.write("Current weather data and forecast will be used to predict energy consumption for the next 7 days.")
 
     # Get the weather data for the next 7 days
@@ -111,41 +111,61 @@ with forecast_tab:
         st.divider()
         
         ###### CLUSTERING ######
-        st.subheader("Clustering Profile")
-        st.write("Input your household's energy consumption data to determine which cluster you belong to.")
-        
-        # Labels for the 18 features
-        feature_labels = [
-            "Early Morning Peak (kWh)", "Early Morning Average (kWh)", 
-            "Late Morning Peak (kWh)", "Late Morning Average (kWh)", 
-            "Early Afternoon Peak (kWh)", "Early Afternoon Average (kWh)", 
-            "Late Afternoon Peak (kWh)", "Late Afternoon Average (kWh)", 
-            "Evening Peak (kWh)", "Evening Average (kWh)", 
-            "Night Peak (kWh)", "Night Average (kWh)", 
-            "Standard Deviation of Energy (kWh)", "Minimum Energy (kWh)", 
-            "Maximum Energy (kWh)", "Q1 Energy (kWh)", 
-            "Median Energy (kWh)", "Q3 Energy (kWh)"
-        ]
+        # Simplified input fields for user data
+        st.subheader("🏠 Determine Household Profile Cluster")
+        st.write("Want to determine your household profile type? Provide a few key values, and the rest will be calculated automatically.")
 
-        # Input fields for user data
-        input_features = []
-        for label in feature_labels:
-            input_features.append(st.number_input(label, min_value=0.0, step=0.1))
+        # Key user inputs
+        total_energy = st.number_input("Total Energy Consumption (kWh) Per Day", min_value=0.0, step=0.1)
+        peak_energy = st.number_input("Peak Energy Consumption (kWh) Per Day", min_value=0.0, step=0.1)
+        average_energy = st.number_input("Average Energy Consumption (kWh) Per Day", min_value=0.0, step=0.1)
 
+        # Button to determine cluster
         if st.button("Determine Cluster"):
-            API_URL = "https://m1auibsxn8.execute-api.us-east-1.amazonaws.com/prod/testqn1clustering"
 
+            # Define weight factors for each period
+            # Example: Higher energy usage in the evening and morning
+            period_weights = np.array([0.15, 0.10, 0.20, 0.15, 0.25, 0.15])  # Weights for 6 periods
+            period_weights = period_weights / period_weights.sum()  # Normalize to ensure they sum to 1
+
+            # Calculate energy values for each period based on weights
+            energy_values = total_energy * period_weights
+
+            # Optionally, add random variability to simulate real-world fluctuations
+            variability = np.random.uniform(-0.05, 0.05, size=len(energy_values))  # ±5% variability
+            energy_values = energy_values * (1 + variability)
+
+            # Calculate peak and average energy for each period
+            peak_period_energy = peak_energy * period_weights
+            avg_period_energy = average_energy * period_weights
+
+            # Calculate standard deviation dynamically
+            sd_energy = np.std(energy_values, ddof=0)  # Population standard deviation
+
+            # Construct the input_features list
+            input_features = [
+                peak_period_energy[0], avg_period_energy[0],  # Early Morning
+                peak_period_energy[1], avg_period_energy[1],  # Late Morning
+                peak_period_energy[2], avg_period_energy[2],  # Early Afternoon
+                peak_period_energy[3], avg_period_energy[3],  # Late Afternoon
+                peak_period_energy[4], avg_period_energy[4],  # Evening
+                peak_period_energy[5], avg_period_energy[5],  # Night
+                sd_energy,  # Standard Deviation
+                avg_period_energy.mean() * 0.8,  # Minimum Energy (e.g., 80% of average)
+                avg_period_energy.mean() * 1.2,  # Maximum Energy (e.g., 120% of average)
+                avg_period_energy.mean() * 0.25,  # Q1 Energy (e.g., 25% of average)
+                avg_period_energy.mean(),  # Median Energy
+                avg_period_energy.mean() * 0.75  # Q3 Energy (e.g., 75% of average)
+            ]
+
+            # Validate the input_features list
             if len(input_features) != 18:
-                st.error("Input must contain exactly 18 numeric values.")
+                st.error("Failed to construct the input features. Please try again.")
                 st.stop()
 
-            if not all(isinstance(f, (int, float)) for f in input_features):
-                st.error("All input features must be numeric values.")
-                st.stop()
-
-            # request payload
+            # Prepare the payload
             payload = {
-                "features": input_features  
+                "features": input_features  # Pass the list directly
             }
 
             try:
@@ -153,6 +173,7 @@ with forecast_tab:
                 payload_json = json.dumps(payload)
 
                 # Call the clustering API
+                API_URL = "https://m1auibsxn8.execute-api.us-east-1.amazonaws.com/prod/testqn1clustering"
                 response = requests.post(API_URL, data=payload_json, headers={"Content-Type": "application/json"})
 
                 if response.status_code == 200:
@@ -173,13 +194,115 @@ with forecast_tab:
         st.divider()
         
         ###### FORECASTING ######
-        st.subheader("Energy Foreacast")
-        if st.button("Generate Energy Forecast for All Clusters"):
-            
-            for cluster_id in range(0, 10):
+        # Add a radio button for user selection
+        st.subheader("⚡️ Energy Forecast")
+        cluster_option = st.radio(
+            "Select a cluster to display the forecast:",
+            options=[0, 1, 2, 3, 4, 5, 6, "All"],
+            format_func=lambda x: f"Cluster {x}" if x != "All" else "All Clusters"
+        )
+
+        # Generate forecast based on user selection
+        if st.button("Generate Energy Forecast"):
+            if cluster_option == "All":
+                # Display forecasts for all clusters
+                for cluster_id in range(7):
+                    st.write(f"### Energy Forecast for Cluster {cluster_id}")
+
+                    # Test data for Lambda
+                    test_data = []
+                    for i in range(len(weather_forecast_df)):
+                        test_data.append({
+                            "datetime": weather_forecast_df["date"].iloc[i].strftime("%Y-%m-%d %H:%M:%S"),  # Match Lambda's expected format
+                            "temperature": float(weather_forecast_df["temperature_2m"].iloc[i]),
+                            "humidity": float(weather_forecast_df["relative_humidity_2m"].iloc[i]),
+                            "windSpeed": float(weather_forecast_df["wind_speed_10m"].iloc[i]),
+                            "is_weekend": int(weather_forecast_df["is_weekend"].iloc[i]),
+                            "season": int(weather_forecast_df["season"].iloc[i])
+                        })
+
+                    API_URL = "https://m1auibsxn8.execute-api.us-east-1.amazonaws.com/prod/call-sagemaker-endpoint"
+
+                    # Request payload
+                    request_payload = {
+                        "periods": 1,
+                        "test_data": test_data,
+                        "cluster": str(cluster_id)  # Pass the current cluster ID
+                    }
+
+                    # Call Lambda via API Gateway
+                    response = requests.post(API_URL, json=request_payload)
+
+                    if response.status_code == 200:
+                        # Parse the forecasted values from the response
+                        data = response.json()
+                        forecast_data = data.get("forecast", {}).get("predictions", [])
+
+                        # Extract predictions and ensure alignment with weather_forecast_df
+                        if len(forecast_data) != len(weather_forecast_df):
+                            st.error(f"Mismatch in forecast data length for Cluster {cluster_id}. Please try again later.")
+                        elif len(forecast_data) == 0:
+                            st.error(f"No forecast data received for Cluster {cluster_id}. Please try again later.")
+                        else:
+                            # Parse the forecast data into a DataFrame
+                            forecast_df = pd.DataFrame(forecast_data)
+                            forecast_df["datetime"] = pd.to_datetime(forecast_df["datetime"])  # Ensure datetime format
+
+                            # Remove timezone from forecast_df's datetime column
+                            forecast_df["datetime"] = forecast_df["datetime"].dt.tz_localize(None)
+
+                            # Remove timezone from weather_forecast_df's date column (if needed)
+                            weather_forecast_df["date"] = weather_forecast_df["date"].dt.tz_localize(None)
+
+                            # Merge with weather_forecast_df to ensure alignment
+                            forecast_df = forecast_df.merge(
+                                weather_forecast_df[["date"]],
+                                left_on="datetime",
+                                right_on="date",
+                                how="right"
+                            )
+
+                            # Plot hourly forecast with confidence interval
+                            fig = go.Figure()
+
+                            # Confidence interval
+                            fig.add_trace(go.Scatter(
+                                x=pd.concat([forecast_df["datetime"], forecast_df["datetime"][::-1]]),
+                                y=pd.concat([forecast_df["upper"], forecast_df["lower"][::-1]]),
+                                fill='toself',
+                                fillcolor='rgba(100, 149, 237, 0.3)',  # Light blue fill
+                                line=dict(color='rgba(255,255,255,0)'),  # No border line
+                                hoverinfo="skip",
+                                name='Confidence Interval'
+                            ))
+
+                            # Hourly predictions line
+                            fig.add_trace(go.Scatter(
+                                x=forecast_df["datetime"],
+                                y=forecast_df["predictions"],
+                                mode='lines',
+                                name='Hourly Forecast',
+                                line=dict(color='blue', dash='solid')
+                            ))
+
+                            fig.update_layout(
+                                title=f"7-Day Hourly Energy Consumption Forecast for Cluster {cluster_id}",
+                                xaxis_title="Date and Time",
+                                yaxis_title="Predicted Energy Consumption (kWh)",
+                                hovermode="x"
+                            )
+
+                            st.plotly_chart(fig)
+
+                    else:
+                        st.error(f"Failed to get forecast for Cluster {cluster_id}. Error: {response.text}")
+
+            else:
+                # Display forecast for the selected cluster
+                cluster_id = cluster_option
                 st.write(f"### Energy Forecast for Cluster {cluster_id}")
 
-                # test data for Lambda
+                # Test data for Lambda
                 test_data = []
                 for i in range(len(weather_forecast_df)):
                     test_data.append({
@@ -193,11 +316,11 @@ with forecast_tab:
 
                 API_URL = "https://m1auibsxn8.execute-api.us-east-1.amazonaws.com/prod/call-sagemaker-endpoint"
 
-                # request payload
+                # Request payload
                 request_payload = {
                     "periods": 1,
                     "test_data": test_data,
-                    "cluster": str(cluster_id)  # Pass the current cluster ID
+                    "cluster": str(cluster_id)  # Pass the selected cluster ID
                 }
 
                 # Call Lambda via API Gateway
@@ -235,7 +358,7 @@ with forecast_tab:
                         # Plot hourly forecast with confidence interval
                         fig = go.Figure()
 
-                        # confidence interval 
+                        # Confidence interval
                         fig.add_trace(go.Scatter(
                             x=pd.concat([forecast_df["datetime"], forecast_df["datetime"][::-1]]),
                             y=pd.concat([forecast_df["upper"], forecast_df["lower"][::-1]]),
@@ -246,7 +369,7 @@ with forecast_tab:
                             name='Confidence Interval'
                         ))
 
-                        # hourly predictions line
+                        # Hourly predictions line
                         fig.add_trace(go.Scatter(
                             x=forecast_df["datetime"],
                             y=forecast_df["predictions"],
@@ -263,10 +386,6 @@ with forecast_tab:
                         )
 
                         st.plotly_chart(fig)
-
-                        # Display the hourly forecasted values in a table
-                        # st.write(f"### Hourly Forecasted Values for Cluster {cluster_id}")
-                        # st.table(forecast_df[["datetime", "predictions", "lower", "upper"]])
 
                 else:
                     st.error(f"Failed to get forecast for Cluster {cluster_id}. Error: {response.text}")
