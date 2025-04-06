@@ -11,6 +11,7 @@ import seaborn as sns
 from retry_requests import retry
 import plotly.graph_objects as go
 import plotly.express as px
+import json
 
 # Function to get weather data from Open-Meteo API
 def get_weather_data(latitude, longitude, variables):
@@ -80,6 +81,42 @@ def get_sagemaker_predictions(payload, endpoint_name, AWS_ACCESS_KEY_ID, AWS_SEC
     result = response['Body'].read().decode('utf-8')
     output_df = pd.read_csv(io.StringIO(result), header=None, names=['probability'])
     return output_df
+
+# Function to invoke Lambda and get prediction results
+def get_lambda_predictions(payload, lambda_function_name, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY):
+    lambda_client = boto3.client(
+        'lambda',
+        region_name='us-east-1',
+        aws_access_key_id=AWS_ACCESS_KEY_ID,
+        aws_secret_access_key=AWS_SECRET_ACCESS_KEY
+    )
+
+    # Preparing the input data for the Lambda function
+    input_data = {
+        "body": json.dumps({
+            "test_data": payload,
+            "cluster": "1"  # Example cluster name, update as necessary
+        })
+    }
+
+    # Invoke the Lambda function
+    response = lambda_client.invoke(
+        FunctionName=lambda_function_name,
+        InvocationType='RequestResponse',  # Synchronous invocation
+        Payload=json.dumps(input_data)
+    )
+
+    # Parse the Lambda response
+    result = json.loads(response['Payload'].read().decode('utf-8'))
+    # Print the result to understand the structure
+    print("Lambda response:", result)
+
+    if response['StatusCode'] == 200:
+        # Assuming the result has a "forecast" field with prediction probabilities
+        output_df = pd.DataFrame(result['probability'])
+        return output_df
+    else:
+        raise Exception(f"Error invoking Lambda: {result}")
 
 # Function to prepare the final data frame for visualization
 def prepare_final_df(hourly_dataframe, output_df):

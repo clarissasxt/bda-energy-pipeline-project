@@ -9,12 +9,12 @@ from retry_requests import retry
 import numpy as np
 import json
 import os
-from dotenv import load_dotenv
+# from dotenv import load_dotenv
 
-from helper_functions_qn2 import get_weather_data, process_weather_data, prepare_data_for_sagemaker, get_sagemaker_predictions, prepare_final_df, plot_heatmap, plot_timeseries
+from helper_functions_qn2 import get_weather_data, process_weather_data, prepare_data_for_sagemaker, get_sagemaker_predictions, get_lambda_predictions, prepare_final_df, plot_heatmap, plot_timeseries
 
 # Load environment variables from the .env file
-load_dotenv() 
+# load_dotenv() 
 
 # Open-Meteo API to retrieve weather forecast information
 cache_session = requests_cache.CachedSession('.cache', expire_after=3600)
@@ -340,14 +340,17 @@ with dunkelflaute_tab:
     longitude = -0.1257
     variables = ["wind_speed_120m", "cloud_cover"]
 
-    # Access the environment variables
-    AWS_ACCESS_KEY_ID_QN2 = os.getenv('AWS_ACCESS_KEY_ID_QN2')
-    AWS_SECRET_ACCESS_KEY_QN2 = os.getenv('AWS_SECRET_ACCESS_KEY_QN2')
+    # # Access the environment variables
+    # AWS_ACCESS_KEY_ID_QN2 = os.getenv('AWS_ACCESS_KEY_ID_QN2')
+    # AWS_SECRET_ACCESS_KEY_QN2 = os.getenv('AWS_SECRET_ACCESS_KEY_QN2')
     
-    print(f"AWS_ACCESS_KEY_ID_QN2: {AWS_ACCESS_KEY_ID_QN2}")
+    # print(f"AWS_ACCESS_KEY_ID_QN2: {AWS_ACCESS_KEY_ID_QN2}")
     
     # Set the SageMaker endpoint name
     endpoint_name_qn2 = 'Orchestrate-ETL-ML-Pipeline-qn2-xgb-endpoint'
+    
+    # Set lambda function name 
+    # lambda_function_name_qn2 = 'call-qn2-sagemaker-endpoint'
 
     if st.button("Generate Dunkelflaute Prediction"):
         # Get weather data
@@ -360,7 +363,42 @@ with dunkelflaute_tab:
         payload, hourly_dataframe = prepare_data_for_sagemaker(hourly_dataframe)
 
         # Get predictions from SageMaker
-        output_df = get_sagemaker_predictions(payload, endpoint_name_qn2, AWS_ACCESS_KEY_ID_QN2, AWS_SECRET_ACCESS_KEY_QN2)
+        # API Gateway URL (replace with your actual URL)
+        api_url = "https://q85vghv4fa.execute-api.us-east-1.amazonaws.com/prod/qn2-invoke-sagemaker"
+
+        # Call the API Gateway
+        response = requests.post(
+            api_url,
+            json={"data": payload},
+            headers={"Content-Type": "application/json"}
+        )
+
+        # Process the response
+        if response.status_code == 200:
+            try:
+                result = response.json()
+                if isinstance(result, str):
+                    # Sometimes API Gateway returns the result as a JSON string
+                    result = json.loads(result)
+                    
+                # Extract predictions based on your response structure
+                if 'body' in result:
+                    body = result['body']
+                    if isinstance(body, str):
+                        body = json.loads(body)
+                    predictions = body['predictions']
+                else:
+                    predictions = result['predictions']
+                    
+                # Create a dataframe with the predictions
+                output_df = pd.DataFrame(predictions, columns=['probability'])
+                print(output_df.head())
+            except Exception as e:
+                print(f"Error processing response: {e}")
+                print("Response content:", response.text)
+        else:
+            print(f"Error: HTTP Status {response.status_code}")
+            print("Response content:", response.text)
 
         # Prepare the final dataframe for visualization
         final_df = prepare_final_df(hourly_dataframe, output_df)
